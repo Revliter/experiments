@@ -1,4 +1,4 @@
-# duplicate the last lm_head and norm to each block, then fix them and train lora
+# duplicate the last lm_head and norm to each block, then fix them and train lora (have bug)
 
 Training Alpaca-LoRA model with params:
 gla: True
