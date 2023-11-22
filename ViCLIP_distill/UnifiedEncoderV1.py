@@ -63,7 +63,8 @@ class UnifiedEncoderV1(UnifiedEncoderBase):
             self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device), x], dim=1
         )  # shape = [*, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
-
+        x = x + self.token_type_embeddings(torch.full_like(x))
+        
         # temporal pos
         cls_tokens = x[:B, :1, :]
         x = x[:, 1:]
@@ -102,6 +103,7 @@ class UnifiedEncoderV1(UnifiedEncoderBase):
         x = self.token_embedding(text)  # [batch_size, n_ctx, d_model]
 
         x = x + self.positional_embedding
+        x = x + self.token_type_embeddings(torch.zeros_like(x))
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
