@@ -9,9 +9,6 @@ class UnifiedEncoderV2(UnifiedEncoderBase):
         
         super().__init__(config, max_txt_l, tokenizer)
 
-    def forward(self, image, text, *args, **kwargs):
-        ...
-
     def forward_image(self, image):
         ...
     

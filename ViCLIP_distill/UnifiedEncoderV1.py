@@ -13,36 +13,6 @@ class UnifiedEncoderV1(UnifiedEncoderBase):
     def __init__(self, config, max_txt_l, tokenizer):
 
         super().__init__(config, max_txt_l, tokenizer)
-
-    def forward(
-        self, 
-        image, 
-        text, 
-        raw_text, 
-        idx,
-        log_generation=None, 
-        return_sims: bool = False,
-        input_text_only: bool = False,
-        input_video_only: bool = False
-    ):
-        '''
-        For image and text, we compute the embedding separately, since they are pairs, we add the two embeddings together.
-        '''
-        assert not input_text_only and not input_video_only
-        
-        # preprocess image
-        if not input_text_only:
-            image_embeds = self.encode_vision(image)
-        else:
-            image_embeds = 0
-        
-        # preprocess text
-        if not input_video_only:
-            text_embeds = self.encode_text(text)
-        else:
-            text_embeds = 0
-        
-        return image_embeds, text_embeds
     
     def forward_image(self, x, masking_prob=0.0, return_embed=False) -> torch.Tensor:
         x = self.conv1(x)  # shape = [*, width, grid, grid]
@@ -52,8 +22,8 @@ class UnifiedEncoderV1(UnifiedEncoderBase):
         x = torch.cat([
             self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device), x], dim=1
         )  # shape = [*, grid ** 2 + 1, width]
-        x = x + self.positional_embedding.to(x.dtype)
-        x = x + self.token_type_embeddings(torch.full_like(x))
+        x = x + self.image_positional_embedding.to(x.dtype)
+        x = x + self.token_type_embeddings[0].to(x.dtype)
         
         # temporal pos
         cls_tokens = x[:B, :1, :]
@@ -69,7 +39,7 @@ class UnifiedEncoderV1(UnifiedEncoderBase):
 
         if masking_prob > 0.0:
             x = self.mask_tokens(x, masking_prob) # 这里mask是rand mask，所以后面无法再区分各帧特征了
-
+        
         x = torch.cat((cls_tokens, x), dim=1)
 
         x = self.image_pre_norm(x)
@@ -82,7 +52,7 @@ class UnifiedEncoderV1(UnifiedEncoderBase):
         if return_embed:
             return x.permute(1, 0, 2)# @ self.proj, self.dropout(x[0]) @ self.proj
         else:
-            if self.proj is not None:
+            if self.image_projection is not None:
                 x = self.dropout(x[0]) @ self.image_projection
             else:
                 x = x.permute(1, 0, 2)  #NBD -> BND
@@ -90,9 +60,9 @@ class UnifiedEncoderV1(UnifiedEncoderBase):
     
     def forward_text(self, text, return_embed=False) -> torch.Tensor:
         x = self.token_embedding(text)  # [batch_size, n_ctx, d_model]
+        x = x + self.text_positional_embedding.to(x.dtype)
+        x = x + self.token_type_embeddings[1].to(x.dtype)
 
-        x = x + self.positional_embedding
-        x = x + self.token_type_embeddings(torch.zeros_like(x))
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
