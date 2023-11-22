@@ -84,29 +84,29 @@ class UnifiedEncoderBase(nn.Module):
     A unified encoder for both image and text
     """
     
-    def __init__(self, config, max_txt_l, tokenizer, vocab_size=0, transformer_width=0, drop_path=0, checkpoint_num=0, dropout=0., temp_embed=True):
+    def __init__(self, config, max_txt_l, tokenizer, vocab_size=0, transformer_width=0, drop_path=0.1, checkpoint_num=0, dropout=0., temp_embed=True):
         self._tokenizer = tokenizer
         self.max_txt_l = max_txt_l
         
-        self.token_type_embeddings = nn.Embedding(2, config.model.hidden_size)
+        self.token_type_embeddings = nn.Embedding(2, config.width)
         self.token_type_embeddings.apply(init_weights)
     
-        scale = config.model.width ** -0.5
-        self.class_embedding = nn.Parameter(scale * torch.randn(config.model.width))
-        self.positional_embedding = nn.Parameter(scale * torch.randn((config.model.input_resolution // config.model.patch_size) ** 2 + 1, config.model.width))
+        scale = config.width ** -0.5
+        self.class_embedding = nn.Parameter(scale * torch.randn(config.width))
+        self.positional_embedding = nn.Parameter(scale * torch.randn((config.input_resolution // config.patch_size) ** 2 + 1, config.width))
     
         if temp_embed:
-            self.temporal_positional_embedding = nn.Parameter(torch.zeros(1, config.num_frames, config.model.width))
+            self.temporal_positional_embedding = nn.Parameter(torch.zeros(1, config.num_frames, config.width))
     
         self.transformer = Transformer(
-            config.model.width, config.model.layers, config.model.heads, drop_path=drop_path, checkpoint_num=checkpoint_num,
+            config.width, config.layers, config.heads, drop_path=drop_path, checkpoint_num=checkpoint_num,
             dropout=dropout
         )
         
         self.conv1 = nn.Conv3d(
-            3, config.model.width, 
-            (config.model.kernel_size, config.model.patch_size, config.model.patch_size), 
-            (config.model.kernel_size, config.model.patch_size, config.model.patch_size), 
+            3, config.width, 
+            (config.kernel_size, config.patch_size, config.patch_size), 
+            (config.kernel_size, config.patch_size, config.patch_size), 
             (0, 0, 0), bias=False
         )
         
@@ -117,15 +117,32 @@ class UnifiedEncoderBase(nn.Module):
         self.image_post_norm = LayerNorm(transformer_width)
         self.text_post_norm = LayerNorm(transformer_width)
         
-        self.text_projection = nn.Parameter(torch.empty(config.model.width, config.model.output_dim))
+        self.text_projection = nn.Parameter(torch.empty(config.width, config.output_dim))
         self.text_projection.data.normal_(mean=0.0, std=0.02)
-        self.image_projection = nn.Parameter(torch.empty(config.model.width, config.model.output_dim))
+        self.image_projection = nn.Parameter(torch.empty(config.width, config.output_dim))
         self.image_projection.data.normal_(mean=0.0, std=0.02)
     
-    def forward_image(self, image):
+    def encode_vision(self, image, test=False) -> torch.Tensor:
+        if image.ndim == 5:
+            image = image.permute(0, 2, 1, 3, 4).contiguous()
+        else:
+            image = image.unsqueeze(2)
+        if not test and self.config.masking_prob > 0.0:
+            return self.forward_image(
+                image, masking_prob=self.config.masking_prob
+            )
+
+        return self.forward_image(image)
+    
+    def encode_text(self, text) -> torch.Tensor:
+        text = self.tokenize(text, context_length=self.max_txt_l)
+        text_embeds = self.forward_text(text)
+        return text_embeds
+    
+    def forward_image(self, image, masking_prob=0.0, return_embed=False) -> torch.Tensor:
         ...
     
-    def forward_text(self, text):
+    def forward_text(self, text) -> torch.Tensor:
         ...
     
     def tokenize(self, texts, context_length=77, truncate=True):

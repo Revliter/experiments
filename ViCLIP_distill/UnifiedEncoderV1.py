@@ -2,8 +2,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
-from UnifiedEncoderBase import UnifiedEncoderBase
-from typing import override
+from .UnifiedEncoderBase import UnifiedEncoderBase
 
 class UnifiedEncoderV1(UnifiedEncoderBase):
     """
@@ -15,7 +14,6 @@ class UnifiedEncoderV1(UnifiedEncoderBase):
 
         super().__init__(config, max_txt_l, tokenizer)
 
-    @override
     def forward(
         self, 
         image, 
@@ -34,26 +32,18 @@ class UnifiedEncoderV1(UnifiedEncoderBase):
         
         # preprocess image
         if not input_text_only:
-            if image.ndim == 5:
-                image = image.permute(0, 2, 1, 3, 4).contiguous()
-            else:
-                image = image.unsqueeze(2)
-            image_embeds = self.forward_image(image, masking_prob=self.model.masking_prob)
+            image_embeds = self.encode_vision(image)
         else:
             image_embeds = 0
         
         # preprocess text
         if not input_video_only:
-            text = self.tokenize(text, context_length=self.max_txt_l)
-            text_embeds = self.forward_text(text)
+            text_embeds = self.encode_text(text)
         else:
             text_embeds = 0
         
-        final_embed = image_embeds + text_embeds
-        
-        return final_embed
-        
-    @override
+        return image_embeds, text_embeds
+    
     def forward_image(self, x, masking_prob=0.0, return_embed=False) -> torch.Tensor:
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         B, C, T, H, W = x.shape
@@ -98,7 +88,6 @@ class UnifiedEncoderV1(UnifiedEncoderBase):
                 x = x.permute(1, 0, 2)  #NBD -> BND
             return x
     
-    @override
     def forward_text(self, text, return_embed=False) -> torch.Tensor:
         x = self.token_embedding(text)  # [batch_size, n_ctx, d_model]
 
