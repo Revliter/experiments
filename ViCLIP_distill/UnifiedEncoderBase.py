@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 from einops import rearrange
-from typing import override
 from pkg_resources import packaging
 
 from collections import OrderedDict
