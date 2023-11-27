@@ -155,10 +155,15 @@ class QuickGELU(nn.Module):
     def forward(self, x):
         return x * torch.sigmoid(1.702 * x)
 
+
 class ResidualAttentionBlock(nn.Module):
-    def __init__(self, d_model, n_head, drop_path=0., attn_mask=None, dropout=0.):
+    def __init__(self, d_model, n_head, drop_path=0., attn_mask=None, dropout=0., num_modality=0):
         super().__init__()
 
+        if num_modality != 0:
+            self.modality_specific_queries = nn.ModuleList([nn.Linear(d_model, d_model) for _ in range(num_modality)])
+        self.num_modality = num_modality
+        
         self.drop_path1 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.drop_path2 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         # logger.info(f'Droppath: {drop_path}')
@@ -174,31 +179,33 @@ class ResidualAttentionBlock(nn.Module):
         self.ln_2 = nn.LayerNorm(d_model)
         self.attn_mask = attn_mask
 
-    def attention(self, x):
+    def attention(self, x, modality_type=0):
         self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
+        if self.num_modality != 0:
+            return self.attn(self.modality_specific_queries[modality_type](x), x, x, need_weights=False, attn_mask=self.attn_mask)[0]
         return self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)[0]
 
-    def forward(self, x):
-        x = x + self.drop_path1(self.attention(self.ln_1(x)))
+    def forward(self, x, modality_type=0):
+        x = x + self.drop_path1(self.attention(self.ln_1(x), modality_type))
         x = x + self.drop_path2(self.mlp(self.ln_2(x)))
         return x
 
 
 class Transformer(nn.Module):
-    def __init__(self, width, layers, heads, drop_path=0., checkpoint_num=0, dropout=0.):
+    def __init__(self, width, layers, heads, drop_path=0., checkpoint_num=0, dropout=0., num_modality=0):
         super().__init__()
         dpr = [x.item() for x in torch.linspace(0, drop_path, layers)]
         self.resblocks = nn.ModuleList()
         for idx in range(layers):
-            self.resblocks.append(ResidualAttentionBlock(width, heads, drop_path=dpr[idx], dropout=dropout))
+            self.resblocks.append(ResidualAttentionBlock(width, heads, drop_path=dpr[idx], dropout=dropout, num_modality=num_modality))
         self.checkpoint_num = checkpoint_num
 
-    def forward(self, x):
+    def forward(self, x, modality_type=0):
         for idx, blk in enumerate(self.resblocks):
             if idx < self.checkpoint_num:
-                x = checkpoint.checkpoint(blk, x)
+                x = checkpoint.checkpoint(blk, x, modality_type)
             else:
-                x = blk(x)
+                x = blk(x, modality_type)
         return x
 
 
@@ -218,7 +225,7 @@ class UnifiedEncoderBase(nn.Module):
     A unified encoder for both image and text
     """
     
-    def __init__(self, config, max_txt_l, tokenizer, drop_path=0.1, checkpoint_num=0, dropout=0., temp_embed=True):
+    def __init__(self, config, max_txt_l, tokenizer, use_multimodality_queries=False, drop_path=0.1, checkpoint_num=0, dropout=0., temp_embed=True):
         super(UnifiedEncoderBase, self).__init__()
         self.config = config
         
@@ -233,10 +240,10 @@ class UnifiedEncoderBase(nn.Module):
         
         if temp_embed:
             self.temporal_positional_embedding = nn.Parameter(torch.zeros(1, config.num_frames, config.width))
-    
+        
         self.transformer = Transformer(
             config.width, config.layers, config.heads, drop_path=drop_path, checkpoint_num=checkpoint_num,
-            dropout=dropout
+            dropout=dropout, num_modality=0 if not use_multimodality_queries else 2
         )
         
         self.conv1 = nn.Conv3d(
